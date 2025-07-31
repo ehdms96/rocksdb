@@ -2421,15 +2421,15 @@ class Stats {
 
         } else {
           fprintf(stderr,
-                  "%s ... thread %d: (%" PRIu64 ",%" PRIu64
-                  ") ops and "
-                  "(%.1f,%.1f) ops/second in (%.6f,%.6f) seconds\n",
+                  "%s thread_%d: %" PRIu64 ",%" PRIu64
+                  " ops_and "
+                  "%.1f,%.1f ops/second_in %.6f,%.6f seconds\n",
                   clock_->TimeToString(now / 1000000).c_str(), id_,
-                  done_ - last_report_done_, done_,
-                  (done_ - last_report_done_) / (usecs_since_last / 1000000.0),
-                  done_ / ((now - start_) / 1000000.0),
-                  (now - last_report_finish_) / 1000000.0,
-                  (now - start_) / 1000000.0);
+                  done_ - last_report_done_, done_, //현재 done, total done
+                  (done_ - last_report_done_) / (usecs_since_last / 1000000.0), //1초당_ops/s
+                  done_ / ((now - start_) / 1000000.0), // total_ops/total_sec
+                  (now - last_report_finish_) / 1000000.0, // 실제 걸린 1초
+                  (now - start_) / 1000000.0); // total 걸린 총 시간
 
           if (id_ == 0 && FLAGS_stats_per_interval) {
             std::string stats;
