@@ -41,13 +41,15 @@ class Superblock {
   uint32_t sequence_ = 0;
   uint32_t superblock_version_ = 0;
   uint32_t flags_ = 0;
+  uint32_t wal_flags_ = 0; /* test */
   uint32_t block_size_ = 0; /* in bytes */
   uint32_t zone_size_ = 0;  /* in blocks */
   uint32_t nr_zones_ = 0;
   char aux_fs_path_[256] = {0};
   uint32_t finish_treshold_ = 0;
   char zenfs_version_[64]{0};
-  char reserved_[123] = {0};
+  char reserved_[119] = {0};
+  // char reserved_[123] = {0};
 
  public:
   const uint32_t MAGIC = 0x5a454e46; /* ZENF */
@@ -55,13 +57,14 @@ class Superblock {
   const uint32_t CURRENT_SUPERBLOCK_VERSION = 2;
   const uint32_t DEFAULT_FLAGS = 0;
   const uint32_t FLAGS_ENABLE_GC = 1 << 0;
+  const uint32_t FLAGS_WAL_ON_AUX = 1 << 0;
 
   Superblock() {}
 
   /* Create a superblock for a filesystem covering the entire zoned block device
    */
   Superblock(ZonedBlockDevice* zbd, std::string aux_fs_path = "",
-             uint32_t finish_threshold = 0, bool enable_gc = false) {
+             uint32_t finish_threshold = 0, bool enable_gc = false, bool wal_on_aux = false) {
     std::string uuid = Env::Default()->GenerateUniqueId();
     int uuid_len =
         std::min(uuid.length(),
@@ -72,6 +75,7 @@ class Superblock {
     flags_ = DEFAULT_FLAGS;
     wal_flags_ = DEFAULT_FLAGS;
     if (enable_gc) flags_ |= FLAGS_ENABLE_GC;
+    if (wal_on_aux) wal_flags_ |= FLAGS_WAL_ON_AUX;
 
     finish_treshold_ = finish_threshold;
 
@@ -152,6 +156,14 @@ class ZenFS : public FileSystemWrapper {
   bool run_gc_worker_ = false;
   bool wal_on_aux_ = false;
 
+  struct gc_stat {
+    uint64_t elapsed_time;
+    uint64_t free_percent;
+    uint32_t num_finished;
+    uint32_t num_victimed;
+  };
+  std::vector<gc_stat> gc_stats_;
+
   struct ZenFSMetadataWriter : public MetadataWriter {
     ZenFS* zenFS;
     IOStatus Persist(ZoneFile* zoneFile) {
@@ -214,12 +226,99 @@ class ZenFS : public FileSystemWrapper {
     return path;
   }
 
+  void ZenFSStats() {
+    fprintf(stdout, "***** Garbage Collection *****\n");
+    fprintf(stdout, "total copied data : %lf GiB\n", (double)total_copied_data / (1024 * 1024 * 1024));
+    fprintf(stdout, "total copied data : %lu Bytes\n", total_copied_data);
+    fprintf(stdout, "Total GC count : %lu\n", GC_count);
+    fprintf(stdout, "Total Victim Zone # : %lu\n", total_victim_zone_num);
+
+    fprintf(stdout, "migrated files : %lu\n", migrated_files);
+    migrated_files = 0;
+    fprintf(stdout, "***************\n");
+    
+    // Lifetime Diff: new file - existing file in a zone (DZR 논문에 들어가는 : 파일이 존에 할당될 때 '나'와 같은 존 내부에서 존재하는 file과의 최대 수명 차이)
+    fprintf(stdout, "***** Lifetime Diff *****\n");
+    for (int i = 0; i < 4; i++) {
+      fprintf(stdout, "Diff %d : %u\n", i, zbd_->diff_cnt_[i].load());
+      zbd_->diff_cnt_[i].store(0);
+    }
+    for (int i = 0; i <= 5; i++) {
+      fprintf(stdout, "Same Lifetime %d : %u\n", i, zbd_->diff_cnt_[100 + i].load());
+      zbd_->diff_cnt_[100 + i].store(0);
+    }
+
+    // Zone의 lifetime 처음 정해지는 거
+    fprintf(stdout, "*****Zone Lifetime Dist.*****\n");
+    fprintf(stdout, "short : %lu\n", zbd_->zone_lifetimes_[2].load());
+    fprintf(stdout, "medium : %lu\n", zbd_->zone_lifetimes_[3].load());
+    fprintf(stdout, "long : %lu\n", zbd_->zone_lifetimes_[4].load());
+    fprintf(stdout, "extreme : %lu\n", zbd_->zone_lifetimes_[5].load());
+    for (int i = 2; i < 6; i++) {
+      zbd_->zone_lifetimes_[i].store(0);
+    }
+
+    // Zone Lifetime is used by ZenFS only (파일이 존에 할당될 때의 존-파일 사이간 수명 차이)
+    fprintf(stdout,
+      "*****zone lifetime diff(zone lifetime - file lifetime)*****\n");
+    for (int i = 0; i < 6; i++) {
+      fprintf(stdout, "zone lifetime diff %d : %d\n", i, zbd_->zone_diff_[i].load());
+      zbd_->zone_diff_[i].store(0);
+    }
+
+    fprintf(stdout, "*****Migrated files lifetime*****\n");
+    fprintf(stdout, "SHORT : %lu\n", migrated_files_[2]);
+    fprintf(stdout, "MEDIUM : %lu\n", migrated_files_[3]);
+    fprintf(stdout, "LONG : %lu\n", migrated_files_[4]);
+    fprintf(stdout, "EXTREME : %lu\n", migrated_files_[5]);
+    for (int i = 2; i < 6; i++) {
+      migrated_files_[i] = 0;
+    }
+
+    // 그냥 reset / GC에 의해서 copy가 발생한 zone / copy가 발생하지 않은 zone
+    fprintf(stdout, "*****Zone Reset Stats*****\n");
+    fprintf(stdout, "# Total Zone Calls : %lu\n", zbd_->total_reset_calls_.load());
+    fprintf(stdout, "# Total Zone Reset : %lu\n", zbd_->total_reset_zones_.load());
+    fprintf(stdout, "Zone-Reset max utils : %lu\n", zbd_->reset_util_max_.load());
+    fprintf(stdout, "Zone-Reset avg utils : %lf\n",
+            static_cast<double>(zbd_->reset_util_sum_.load()) / zbd_->total_reset_zones_.load());
+    zbd_->total_reset_calls_.store(0);
+    zbd_->reset_util_max_.store(0);
+    zbd_->reset_util_sum_.store(0);
+    zbd_->total_reset_zones_.store(0);
+
+    fprintf(stdout, "***** Space Amplification *****\n");
+    uint64_t used = zbd_->GetUsedSpace();
+    uint64_t free = zbd_->GetFreeSpace();
+    uint64_t reclaimable = zbd_->GetReclaimableSpace();
+
+    if (used == 0) used = 1;
+    fprintf(stdout,
+            "Free : %lu MB\nUsed : %lu MB\nReclaimable : %lu MB\nSpace "
+            "Amplification : %lu%%\n",
+            free / (1024 * 1024), 
+            used / (1024 * 1024),
+            reclaimable / (1024 * 1024), 
+            (100 * reclaimable) / used);
+
+    fprintf(stdout, "***** GC stats *****\n");
+    for (auto stat : gc_stats_) {
+      fprintf(stdout,
+              "free : %lu, elapsed time : %lu, #gc_finished : %u, #gc_victimed : %u\n",
+              stat.free_percent, stat.elapsed_time, stat.num_finished,stat.num_victimed);
+    }
+    gc_stats_.clear();
+  }
+
   void RestartWorkload() {
     fprintf(stdout, "ZenFS::RestartWorkload\n");
     ZenFSStats();
     zbd_->do_workload = true;
   }
 
+  uint64_t GetCurrentFSTime() {
+    return Env::Default()->NowMicros() - zbd_->start_time_;
+  }
 
   /* Must hold files_mtx_ */
   std::shared_ptr<ZoneFile> GetFileNoLock(std::string fname);
@@ -290,7 +389,7 @@ class ZenFS : public FileSystemWrapper {
 
   Status Mount(bool readonly);
   Status MkFS(std::string aux_fs_path, uint32_t finish_threshold,
-              bool enable_gc);
+              bool enable_gc, bool wal_on_aux);
   std::map<std::string, Env::WriteLifeTimeHint> GetWriteLifeTimeHints();
 
   const char* Name() const override {
@@ -462,16 +561,24 @@ class ZenFS : public FileSystemWrapper {
   void GetZenFSSnapshot(ZenFSSnapshot& snapshot,
                         const ZenFSSnapshotOptions& options);
 
-  IOStatus MigrateExtents(const std::vector<ZoneExtentSnapshot*>& extents);
+  IOStatus MigrateExtents(const std::vector<ZoneExtentSnapshot*>& extents, uint64_t *copied_data);
 
   IOStatus MigrateFileExtents(
       const std::string& fname,
-      const std::vector<ZoneExtentSnapshot*>& migrate_exts);
+      const std::vector<ZoneExtentSnapshot*>& migrate_exts,
+      uint64_t *copied_data);
 
  private:
-  const uint64_t GC_START_LEVEL =
-      20;                      /* Enable GC when < 20% free space available */
+  const uint64_t GC_START_LEVEL = 20; /* Enable GC when < 20% free space available */
   const uint64_t GC_SLOPE = 3; /* GC agressiveness */
+
+  uint64_t GC_count = 0;
+  uint64_t total_copied_data = 0;
+  uint64_t total_victim_zone_num = 0;
+
+  uint64_t migrated_files = 0;
+  uint64_t migrated_files_[6] = {0, };
+
   void GCWorker();
 };
 #endif  // !defined(ROCKSDB_LITE) && defined(OS_LINUX)

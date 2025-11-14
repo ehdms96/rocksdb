@@ -28,6 +28,7 @@
 #include "rocksdb/env.h"
 #include "rocksdb/file_system.h"
 #include "rocksdb/io_status.h"
+
 #define CONV_SPACE_BYTES (3221225472) //CNS SSD size : 4G - 4294967296
 
 namespace ROCKSDB_NAMESPACE {
@@ -55,6 +56,7 @@ class Zone {
   ZonedBlockDevice *zbd_;
   ZonedBlockDeviceBackend *zbd_be_;
   std::atomic_bool busy_;
+  Env *env_;
 
  public:
   explicit Zone(ZonedBlockDevice *zbd, ZonedBlockDeviceBackend *zbd_be,
@@ -65,11 +67,14 @@ class Zone {
   uint64_t max_capacity_;
   uint64_t wp_;
   Env::WriteLifeTimeHint lifetime_;
+  Env::WriteLifeTimeHint min_lifetime_;
+  Env::WriteLifeTimeHint max_lifetime_;
   std::atomic<uint64_t> used_capacity_;
 
   IOStatus Reset();
   IOStatus Finish();
   IOStatus Close();
+  uint64_t Utilization();
 
   IOStatus Append(char *data, uint32_t size);
   bool IsUsed();
@@ -148,7 +153,7 @@ class ZonedBlockDevice {
   // std::unique_ptr<ZonedBlockDeviceBackend> zbd_be_;
   // std::vector<Zone *> io_zones;
   std::vector<Zone *> meta_zones;
-  time_t start_time_;
+  // time_t start_time_;
   std::shared_ptr<Logger> logger_;
   uint32_t finish_threshold_ = 0;
   std::atomic<uint64_t> bytes_written_{0};
@@ -194,6 +199,8 @@ class ZonedBlockDevice {
                           Zone **out_zone);
   IOStatus AllocateMetaZone(Zone **out_meta_zone);
 
+  bool do_workload {false};
+
   uint64_t GetFreeSpace();
   uint64_t GetUsedSpace();
   uint64_t GetReclaimableSpace();
@@ -238,9 +245,22 @@ class ZonedBlockDevice {
   };
   uint64_t GetTotalBytesWritten() { return bytes_written_.load(); };
 
+  uint64_t start_time_;
+  uint64_t prev_time_;
+  Env *env_;
+
   std::vector<Zone*> io_zones;
   std::atomic<uint64_t> allocate_io_zones {0};
 
+  std::atomic<uint32_t> diff_cnt_[200]{0};
+  std::atomic<int32_t> zone_diff_[6]{0};
+  std::atomic<uint64_t> alloc_empty_{0};
+  std::atomic<uint64_t> zone_lifetimes_[6];
+
+  std::atomic<uint64_t> total_reset_zones_{0};
+  std::atomic<uint64_t> total_reset_calls_{0};
+  std::atomic<uint64_t> reset_util_sum_{0};
+  std::atomic<uint64_t> reset_util_max_{0};
 
   std::atomic<uint64_t> cur_conv_offset;
   std::string aux_fs_path;

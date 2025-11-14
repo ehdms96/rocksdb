@@ -48,6 +48,7 @@ DEFINE_string(backup_path, "", "Path to backup files");
 DEFINE_string(src_file, "", "Source file path");
 DEFINE_string(dest_file, "", "Destination file path");
 DEFINE_bool(enable_gc, false, "Enable garbage collection");
+DEFINE_bool(wal_on_aux, false, "Enable storing WAL files in [aux_path]");
 DEFINE_int32(start_zone, -1, "start zone number");
 DEFINE_int32(num_zones, -1, "start zone number");
 DEFINE_int32(ao_zones, -1, "number of active/open zones");
@@ -191,7 +192,7 @@ int zenfs_tool_mkfs() {
 
   AddDirSeparatorAtEnd(FLAGS_aux_path);
 
-  s = zenFS->MkFS(FLAGS_aux_path, FLAGS_finish_threshold, FLAGS_enable_gc);
+  s = zenFS->MkFS(FLAGS_aux_path, FLAGS_finish_threshold, FLAGS_enable_gc, FLAGS_wal_on_aux);
   if (!s.ok()) {
     fprintf(stderr, "Failed to create file system, error: %s\n",
             s.ToString().c_str());

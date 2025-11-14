@@ -28,6 +28,7 @@
 #include "snapshot.h"
 #include "util/coding.h"
 #include "util/crc32c.h"
+#include <iostream>
 
 #define DEFAULT_ZENV_LOG_PATH "/tmp/"
 
@@ -39,6 +40,7 @@ namespace ROCKSDB_NAMESPACE {
 
 Status Superblock::DecodeFrom(Slice* input) {
   if (input->size() != ENCODED_SIZE) {
+    fprintf(stdout, "%ld != %d\n", input->size(), ENCODED_SIZE);
     return Status::Corruption("ZenFS Superblock",
                               "Error: Superblock size missmatch");
   }
@@ -49,6 +51,7 @@ Status Superblock::DecodeFrom(Slice* input) {
   GetFixed32(input, &sequence_);
   GetFixed32(input, &superblock_version_);
   GetFixed32(input, &flags_);
+  GetFixed32(input, &wal_flags_);
   GetFixed32(input, &block_size_);
   GetFixed32(input, &zone_size_);
   GetFixed32(input, &nr_zones_);
@@ -82,6 +85,7 @@ void Superblock::EncodeTo(std::string* output) {
   PutFixed32(output, sequence_);
   PutFixed32(output, superblock_version_);
   PutFixed32(output, flags_);
+  PutFixed32(output, wal_flags_);
   PutFixed32(output, block_size_);
   PutFixed32(output, zone_size_);
   PutFixed32(output, nr_zones_);
@@ -113,6 +117,8 @@ void Superblock::GetReport(std::string* reportString) {
   reportString->append(std::to_string(finish_treshold_));
   reportString->append("\nGarbage Collection Enabled:\t");
   reportString->append(std::to_string(!!(flags_ & FLAGS_ENABLE_GC)));
+  reportString->append("\nWAL On Aux Enabled:\t");
+  reportString->append(std::to_string(!!(wal_flags_ & FLAGS_WAL_ON_AUX)));
   reportString->append("\nAuxiliary FS Path:\t\t");
   reportString->append(aux_fs_path_);
   reportString->append("\nZenFS Version:\t\t\t");
@@ -124,9 +130,11 @@ void Superblock::GetReport(std::string* reportString) {
 }
 
 Status Superblock::CompatibleWith(ZonedBlockDevice* zbd) {
-  if (block_size_ != zbd->GetBlockSize())
+  if (block_size_ != zbd->GetBlockSize()){
+    fprintf(stdout, "%d != %d\n", block_size_, zbd->GetBlockSize());
+
     return Status::Corruption("ZenFS Superblock",
-                              "Error: block size missmatch");
+                              "Error: block size missmatch");}
   if (zone_size_ != (zbd->GetZoneSize() / block_size_))
     return Status::Corruption("ZenFS Superblock", "Error: zone size missmatch");
   if (nr_zones_ > zbd->GetNrZones())
@@ -270,9 +278,35 @@ ZenFS::~ZenFS() {
 
   wal_on_aux_ = false;
 
+  ZenFSStats();
   meta_log_.reset(nullptr);
   ClearFiles();
   delete zbd_;
+}
+
+std::string time_in_HH_MM_SS_MMM_l()
+{
+    using namespace std::chrono;
+
+    // get current time
+    auto now = system_clock::now();
+
+    // get number of milliseconds for the current second
+    // (remainder after division into seconds)
+    auto ms = duration_cast<milliseconds>(now.time_since_epoch()) % 1000;
+
+    // convert to std::time_t in order to convert to std::tm (broken time)
+    auto timer = system_clock::to_time_t(now);
+
+    // convert to broken time
+    std::tm bt = *std::localtime(&timer);
+
+    std::ostringstream oss;
+
+    oss << std::put_time(&bt, "%H:%M:%S"); // HH:MM:SS
+    oss << '.' << std::setfill('0') << std::setw(3) << ms.count();
+
+    return oss.str();
 }
 
 void ZenFS::GCWorker() {
@@ -285,15 +319,26 @@ void ZenFS::GCWorker() {
     ZenFSSnapshot snapshot;
     ZenFSSnapshotOptions options;
 
+    uint64_t copied_data = 0;
     if (free_percent > GC_START_LEVEL) continue;
+    uint64_t gc_start_time = GetCurrentFSTime();
+    std::string gc_start_time_str = time_in_HH_MM_SS_MMM_l();
 
+    GC_count++;
     options.zone_ = 1;
     options.zone_file_ = 1;
     options.log_garbage_ = 1;
 
     GetZenFSSnapshot(snapshot, options);
 
-    uint64_t threshold = (100 - GC_SLOPE * (GC_START_LEVEL - free_percent));
+    uint32_t gc_num_finished = 0; // number of finished zone
+    uint32_t gc_num_victimed = 0; // number of victim zone
+
+    // uint64_t threshold = (100 - GC_SLOPE * (GC_START_LEVEL - free_percent));
+    uint64_t trigger = GC_SLOPE * (GC_START_LEVEL - free_percent);
+    uint64_t threshold = (100 - trigger);
+    if (100 < trigger) threshold = 0;
+
     std::set<uint64_t> migrate_zones_start;
     for (const auto& zone : snapshot.zones_) {
       if (zone.capacity == 0) {
@@ -301,6 +346,7 @@ void ZenFS::GCWorker() {
             100 - 100 * zone.used_capacity / zone.max_capacity;
         if (garbage_percent_approx > threshold &&
             garbage_percent_approx < 100) {
+          gc_num_victimed++;
           migrate_zones_start.emplace(zone.start);
         }
       }
@@ -314,15 +360,32 @@ void ZenFS::GCWorker() {
       }
     }
 
+    uint64_t local_copied_data = 0;
     if (migrate_exts.size() > 0) {
+      for (auto& ext : migrate_exts) {
+        copied_data += ext->length;
+      }
       IOStatus s;
       Info(logger_, "Garbage collecting %d extents \n",
            (int)migrate_exts.size());
-      s = MigrateExtents(migrate_exts);
+      s = MigrateExtents(migrate_exts, &local_copied_data);
       if (!s.ok()) {
         Error(logger_, "Garbage collection failed");
       }
     }
+
+    uint64_t gc_end_time = GetCurrentFSTime();
+    std::string gc_end_time_str = time_in_HH_MM_SS_MMM_l();
+    uint64_t gc_elapsed_time = gc_end_time - gc_start_time;
+
+    gc_stat gs;
+    gs.elapsed_time = gc_elapsed_time;
+    gs.free_percent = free_percent;
+    gs.num_finished = gc_num_finished;
+    gs.num_victimed = gc_num_victimed;
+    gc_stats_.push_back(gs);
+
+    total_victim_zone_num += gc_num_victimed;
   }
 }
 
@@ -1533,7 +1596,7 @@ Status ZenFS::Mount(bool readonly) {
 }
 
 Status ZenFS::MkFS(std::string aux_fs_p, uint32_t finish_threshold,
-                   bool enable_gc) {
+                   bool enable_gc, bool wal_on_aux) {
   std::vector<Zone*> metazones = zbd_->GetMetaZones();
   std::unique_ptr<ZenMetaLog> log;
   Zone* meta_zone = nullptr;
@@ -1795,8 +1858,7 @@ void ZenFS::GetZenFSSnapshot(ZenFSSnapshot& snapshot,
   }
 }
 
-IOStatus ZenFS::MigrateExtents(
-    const std::vector<ZoneExtentSnapshot*>& extents) {
+IOStatus ZenFS::MigrateExtents( const std::vector<ZoneExtentSnapshot*>& extents, uint64_t *copied_data) {
   IOStatus s;
   // Group extents by their filename
   std::map<std::string, std::vector<ZoneExtentSnapshot*>> file_extents;
@@ -1809,7 +1871,7 @@ IOStatus ZenFS::MigrateExtents(
   }
 
   for (const auto& it : file_extents) {
-    s = MigrateFileExtents(it.first, it.second);
+    s = MigrateFileExtents(it.first, it.second, copied_data);
     if (!s.ok()) break;
     s = zbd_->ResetUnusedIOZones();
     if (!s.ok()) break;
@@ -1819,10 +1881,14 @@ IOStatus ZenFS::MigrateExtents(
 
 IOStatus ZenFS::MigrateFileExtents(
     const std::string& fname,
-    const std::vector<ZoneExtentSnapshot*>& migrate_exts) {
+    const std::vector<ZoneExtentSnapshot*>& migrate_exts,
+    uint64_t *copied_data) {
   IOStatus s = IOStatus::OK();
   Info(logger_, "MigrateFileExtents, fname: %s, extent count: %lu",
        fname.data(), migrate_exts.size());
+
+  uint64_t copied_data_size = 0;
+  bool file_migrated = false;
 
   // The file may be deleted by other threads, better double check.
   auto zfile = GetFile(fname);
@@ -1886,6 +1952,9 @@ IOStatus ZenFS::MigrateFileExtents(
       zbd_->AddGCBytesWritten(ext->length_);
     }
 
+    file_migrated = true;
+    copied_data_size += ext->length_;
+
     // If the file doesn't exist, skip
     if (GetFileNoLock(fname) == nullptr) {
       Info(logger_, "Migrate file not exist anymore.");
@@ -1900,9 +1969,16 @@ IOStatus ZenFS::MigrateFileExtents(
     zbd_->ReleaseMigrateZone(target_zone);
   }
 
+  if (file_migrated == true) {
+    migrated_files++;
+    migrated_files_[zfile->GetWriteLifeTimeHint()]++;
+  }
+
   SyncFileExtents(zfile.get(), new_extent_list);
   zfile->ReleaseWRLock();
 
+  *copied_data += copied_data_size;
+  total_copied_data += copied_data_size;
   Info(logger_, "MigrateFileExtents Finished, fname: %s, extent count: %lu",
        fname.data(), migrate_exts.size());
   return IOStatus::OK();
