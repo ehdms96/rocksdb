@@ -28,7 +28,7 @@ $(TARGET).dbg: $(TARGET)
 debug: $(TARGET)
 
 $(TARGET): $(TARGET).cc
-	$(CXX) $(CXXFLAGS) -g -o $(TARGET) $< $(LIBS) $(LDFLAGS) -I/home/femu
+	$(CXX) $(CXXFLAGS) -g -o $(TARGET) $< $(LIBS) $(LDFLAGS)
 
 clean:
 	$(RM) $(TARGET) $(TARGET).dbg
