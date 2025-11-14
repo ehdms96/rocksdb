@@ -5,13 +5,7 @@ REPO_ROOT=$( cd -- "$(dirname "$0")" >/dev/null 2>&1 ; pwd -P )
 cd $REPO_ROOT
 
 # 'git describe --abbrev=7 --dirty' will output a version in that looks like "v0.1.0-12-g3456789-dirty".
-# VERSION=$(git describe --abbrev=7 --dirty)
-# Git이 없거나 git 저장소가 아닌 경우 기본 버전 사용
-if git rev-parse --git-dir > /dev/null 2>&1; then
-    VERSION=$(git describe --abbrev=7 --dirty 2>/dev/null || echo "unknown-version")
-else
-    VERSION="manual-build"
-fi
+VERSION=$(git describe --abbrev=7 --dirty)
 
 updateVersionFile () {
   if [ "${#VERSION}" -gt 63 ]; then

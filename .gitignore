@@ -29,7 +29,7 @@ rocksdb.pc
 .watchmanconfig
 CMakeCache.txt
 CMakeFiles/
-build/
+build/*db_bench*
 
 ldb
 manifest_dump
@@ -102,3 +102,6 @@ cmake-build-*
 third-party/folly/
 .cache
 *.sublime-*
+plugin/zenfs/util/rocksdbtest/*
+plugin/zenfs/util/zenfs.dbg
+hytrack
