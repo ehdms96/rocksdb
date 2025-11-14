@@ -3708,8 +3708,8 @@ class Benchmark {
       read_options_.auto_refresh_iterator_with_snapshot =
           FLAGS_auto_refresh_iterator_with_snapshot;
 
-      // YCSB
-      field_count_ = 10;
+      // YCSB valu_size 400으로 고정 (= field_count * field_len)
+      field_count_ = 4;
       field_prefix_ = "field";
       int field_len = 100;
       field_len_generator_ = new ConstGenerator(field_len); // it will always return 100
@@ -3921,6 +3921,17 @@ class Benchmark {
         key_chooser_ = new ScrambledZipfianGenerator(num_record_);
         operation_chooser_.AddValue(DBOperation::READ, 0.5);
         operation_chooser_.AddValue(DBOperation::UPDATE, 0.5);
+        method = &Benchmark::YcsbTxn;
+      } else if (name == "YCSBAU95") { // YCSB A(R5,U95)
+        fresh_db = false;
+        key_chooser_ = new ScrambledZipfianGenerator(num_record_);
+        operation_chooser_.AddValue(DBOperation::READ, 0.05);
+        operation_chooser_.AddValue(DBOperation::UPDATE, 0.95);
+        method = &Benchmark::YcsbTxn;
+      } else if (name == "YCSBAU100") { // YCSB A(U100)
+        fresh_db = false;
+        key_chooser_ = new ScrambledZipfianGenerator(num_record_);
+        operation_chooser_.AddValue(DBOperation::UPDATE, 1);
         method = &Benchmark::YcsbTxn;
       } else if (name =="YCSBB") { // YCSB B(R95,U5)
         fresh_db = false;
