@@ -29,6 +29,22 @@
 
 namespace ROCKSDB_NAMESPACE {
 
+void thread_write(WriteArg* arg) {
+  char* data = arg->data;
+  uint32_t data_size = arg->size;
+  uint64_t offset = arg->offset;
+
+  // fprintf(stderr, "thread_write ds : %u, off : %lu\n", data_size, offset);
+  int ret = arg->zbd->zbd_be_->ConvWrite(data, data_size, offset);
+  if (ret < 0) {
+    fprintf(stderr, "thread_write failed ret : %d errno : %d\n", ret, errno);
+    return ;
+  }
+
+  free(arg->data);
+  free(arg);
+}
+
 ZoneExtent::ZoneExtent(uint64_t start, uint64_t length, Zone* zone)
     : start_(start), length_(length), zone_(zone) {}
 
@@ -315,6 +331,12 @@ IOStatus ZoneFile::CloseWR() {
   s = PersistMetadata();
   if (!s.ok()) return s;
   ReleaseWRLock();
+
+  if (wal_type == 2) {
+    close(fd);
+    return IOStatus::OK();
+  }
+
   return CloseActiveZone();
 }
 
@@ -555,10 +577,55 @@ IOStatus ZoneFile::SparseAppend(char* sparse_buffer, uint32_t data_size) {
   uint32_t block_sz = GetBlockSize();
   IOStatus s;
 
+  if (wal_type == 1 || wal_type == 2) {
+    if (zbd_->cur_conv_offset + data_size >= CONV_SPACE_BYTES) {
+      zbd_->cur_conv_offset = 0;
+    }
+
+    data_size += ZoneFile::SPARSE_HEADER_SIZE;
+    uint32_t align = data_size % block_sz;
+    uint32_t pad_sz = 0;
+
+    if (align) pad_sz = block_sz - align;
+
+    if (pad_sz) memset(sparse_buffer + data_size, 0x0, pad_sz);
+
+    uint64_t extent_length = data_size - ZoneFile::SPARSE_HEADER_SIZE;
+    EncodeFixed64(sparse_buffer, extent_length);
+
+    if (wal_type == 1) {
+      int ret = zbd_->zbd_be_->ConvWrite(sparse_buffer, data_size + pad_sz, zbd_->cur_conv_offset);
+      if (ret < 0) {
+        fprintf(stderr, "ConvWrite failed ret : %d errno : %d\n", ret, errno);
+        return IOStatus::IOError();
+      }
+      zbd_->cur_conv_offset += (data_size + pad_sz);
+      return IOStatus::OK();
+    } else if (wal_type == 2) {
+      int ret = write(fd, sparse_buffer, data_size + pad_sz);
+
+      if (ret < 0) {
+        fprintf(stdout, "ZoneFile::SparseAppend::write failed\n");
+        return IOStatus::IOError();
+      }
+
+      if (fsync(fd) < 0) {
+        fprintf(stdout, "ZoneFile::SparseAppend::fsync failed\n");
+        return IOStatus::IOError();
+      }
+
+      return IOStatus::OK();
+    }
+  }
+
   if (active_zone_ == NULL) {
     s = AllocateNewZone();
     if (!s.ok()) return s;
   }
+
+  // WAL 파일만 로그 찍기 (파일 이름으로 필터)
+  // fprintf(stderr, "WAL SparseAppend start: file=%s data_size=%u \n",
+  //                  GetFilename().c_str(), data_size);
 
   while (left) {
     wr_size = left + ZoneFile::SPARSE_HEADER_SIZE;
@@ -858,8 +925,19 @@ IOStatus ZonedWritableFile::Truncate(uint64_t size,
 }
 
 IOStatus ZonedWritableFile::DataSync() {
+  IOStatus s;
+
+  if (zoneFile_->wal_type == 2) {
+    buffer_mtx_.lock();
+    s = FlushBuffer();
+    buffer_mtx_.unlock();
+    if (!s.ok()) {
+      return s;
+    }
+    return IOStatus::OK();
+  }
+
   if (buffered) {
-    IOStatus s;
     buffer_mtx_.lock();
     /* Flushing the buffer will result in a new extent added to the list*/
     s = FlushBuffer();

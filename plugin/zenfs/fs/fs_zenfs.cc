@@ -31,6 +31,10 @@
 
 #define DEFAULT_ZENV_LOG_PATH "/tmp/"
 
+// #define WAL_POSIX
+#define WAL_CNS
+// #define WAL_ZNS
+
 namespace ROCKSDB_NAMESPACE {
 
 Status Superblock::DecodeFrom(Slice* input) {
@@ -263,6 +267,8 @@ ZenFS::~ZenFS() {
     run_gc_worker_ = false;
     gc_worker_->join();
   }
+
+  wal_on_aux_ = false;
 
   meta_log_.reset(nullptr);
   ClearFiles();
@@ -566,6 +572,14 @@ IOStatus ZenFS::DeleteFileNoLock(std::string fname, const IOOptions& options,
     std::string record;
 
     files_.erase(fname);
+
+    if (zoneFile->wal_type == 2) {
+      if (unlink(zoneFile->filename.c_str()) != 0) {
+        fprintf(stderr, "unlink error : %s\n", zoneFile->filename.c_str());
+        return IOStatus::IOError();
+      }
+    }
+
     s = zoneFile->RemoveLinkName(fname);
     if (!s.ok()) return s;
     EncodeFileDeletionTo(zoneFile, &record, fname);
@@ -853,9 +867,25 @@ IOStatus ZenFS::OpenWritableFile(const std::string& filename,
     if (ends_with(fname, ".log")) {
       zoneFile->SetIOType(IOType::kWAL);
       zoneFile->SetSparse(!file_opts.use_direct_writes);
+      zoneFile->wal_type = 0;
+#ifdef WAL_CNS
+      zoneFile->wal_type = 1;
+#endif
+#ifdef WAL_POSIX
+      zoneFile->wal_type = 2;
+      std::string file_name = filename.substr(1, filename.length());
+      // fprintf(stderr, "Open WAL File : %s\n", ToAuxPath(file_name).c_str());
+      int fd = open(ToAuxPath(file_name).c_str(), O_DIRECT | O_RDWR | O_CREAT, 0644);
+      zoneFile->fd = fd;
+      zoneFile->filename = ToAuxPath(file_name);
+#endif
     } else {
       zoneFile->SetIOType(IOType::kUnknown);
     }
+
+#if defined(WAL_CNS) || defined(WAL_POSIX)
+    zoneFile->SetIOType(IOType::kWAL);
+#endif
 
     /* Persist the creation of the file */
     s = SyncFileMetadataNoLock(zoneFile);
@@ -1475,6 +1505,15 @@ Status ZenFS::Mount(bool readonly) {
   Info(logger_, "Finish threshold %u", superblock_->GetFinishTreshold());
   Info(logger_, "Filesystem mount OK");
 
+  if (superblock_->IsWALEnabled()) {
+    Info(logger_, "Storing WAL files in [aux_path]");
+    wal_on_aux_ = true;
+
+    fprintf(stdout, "***********************************\n");
+    std::cout << "[wal_on_aux_] set success.. \n";
+    fprintf(stdout, "***********************************\n");
+  }
+
   if (!readonly) {
     Info(logger_, "Resetting unused IO Zones..");
     IOStatus status = zbd_->ResetUnusedIOZones();
@@ -1538,7 +1577,7 @@ Status ZenFS::MkFS(std::string aux_fs_p, uint32_t finish_threshold,
 
   log.reset(new ZenMetaLog(zbd_, meta_zone));
 
-  Superblock super(zbd_, aux_fs_path, finish_threshold, enable_gc);
+  Superblock super(zbd_, aux_fs_path, finish_threshold, enable_gc, wal_on_aux);
   std::string super_string;
   super.EncodeTo(&super_string);
 
@@ -1610,9 +1649,21 @@ Status NewZenFS(FileSystem** fs, const ZbdBackendType backend_type,
   }
 #endif
 
+  // 사용할 Zone 범위와 Open/Active zone 개수를 static 하게 세팅
+  // INS1
+  int start_zone = 0;
+  int num_zones = 256;
+
+  // INS2
+  // int start_zone = 256;
+  // int num_zones = 256;
+
+  int aor_zones = 7;
+
   ZonedBlockDevice* zbd =
       new ZonedBlockDevice(backend_name, backend_type, logger, metrics);
-  IOStatus zbd_status = zbd->Open(false, true);
+  // IOStatus zbd_status = zbd->Open(false, true);
+  IOStatus zbd_status = zbd->Open(false, false, start_zone, num_zones, aor_zones);
   if (!zbd_status.ok()) {
     Error(logger, "mkfs: Failed to open zoned block device: %s",
           zbd_status.ToString().c_str());

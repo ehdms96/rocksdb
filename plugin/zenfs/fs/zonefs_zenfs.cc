@@ -362,6 +362,21 @@ int ZoneFsBackend::Write(char *data, uint32_t size, uint64_t pos) {
   return written;
 }
 
+int ZoneFsBackend::ConvRead(char *buf, int size, uint64_t pos, bool direct) {
+  (void)buf;
+  (void)size;
+  (void)pos;
+  (void)direct;
+  return 0;
+}
+
+int ZoneFsBackend::ConvWrite(char *data, uint32_t size, uint64_t pos) {
+  (void)data;
+  (void)size;
+  (void)pos;
+  return 0;
+}
+
 bool ZoneFsBackend::ZoneIsSwr(__attribute__((unused))
                               std::unique_ptr<ZoneList> &zones,
                               __attribute__((unused)) unsigned int idx) {

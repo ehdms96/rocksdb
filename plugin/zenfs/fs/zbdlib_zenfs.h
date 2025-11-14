@@ -24,12 +24,24 @@ class ZbdlibBackend : public ZonedBlockDeviceBackend {
   int read_direct_f_;
   int write_f_;
 
+  int read_f_conv_;
+  int read_direct_f_conv_;
+  int write_f_conv_;
+  int open_conv_;
+  Env* env_;
+
  public:
   explicit ZbdlibBackend(std::string bdevname);
   ~ZbdlibBackend() {
     zbd_close(read_f_);
     zbd_close(read_direct_f_);
     zbd_close(write_f_);
+
+    if (open_conv_) {
+      close(read_f_conv_);
+      close(read_direct_f_conv_);
+      close(write_f_conv_);
+    }
   }
 
   IOStatus Open(bool readonly, bool exclusive, unsigned int *max_active_zones,
@@ -40,6 +52,8 @@ class ZbdlibBackend : public ZonedBlockDeviceBackend {
   IOStatus Close(uint64_t start);
   int Read(char *buf, int size, uint64_t pos, bool direct);
   int Write(char *data, uint32_t size, uint64_t pos);
+  int ConvRead(char *buf, int size, uint64_t pos, bool direct);
+  int ConvWrite(char *data, uint32_t size, uint64_t pos);
   int InvalidateCache(uint64_t pos, uint64_t size);
 
   bool ZoneIsSwr(std::unique_ptr<ZoneList> &zones, unsigned int idx) {

@@ -28,6 +28,7 @@
 #include "rocksdb/env.h"
 #include "rocksdb/file_system.h"
 #include "rocksdb/io_status.h"
+#define CONV_SPACE_BYTES (3221225472) //CNS SSD size : 4G - 4294967296
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -39,9 +40,10 @@ class ZenFSSnapshotOptions;
 class ZoneList {
  private:
   void *data_;
-  unsigned int zone_count_;
+  // unsigned int zone_count_;
 
  public:
+  unsigned int zone_count_;
   ZoneList(void *data, unsigned int zone_count)
       : data_(data), zone_count_(zone_count){};
   void *GetData() { return data_; };
@@ -110,6 +112,8 @@ class ZonedBlockDeviceBackend {
   virtual IOStatus Close(uint64_t start) = 0;
   virtual int Read(char *buf, int size, uint64_t pos, bool direct) = 0;
   virtual int Write(char *data, uint32_t size, uint64_t pos) = 0;
+  virtual int ConvRead(char *buf, int size, uint64_t pos, bool direct) = 0;
+  virtual int ConvWrite(char *data, uint32_t size, uint64_t pos) = 0;
   virtual int InvalidateCache(uint64_t pos, uint64_t size) = 0;
   virtual bool ZoneIsSwr(std::unique_ptr<ZoneList> &zones,
                          unsigned int idx) = 0;
@@ -141,8 +145,8 @@ enum class ZbdBackendType {
 
 class ZonedBlockDevice {
  private:
-  std::unique_ptr<ZonedBlockDeviceBackend> zbd_be_;
-  std::vector<Zone *> io_zones;
+  // std::unique_ptr<ZonedBlockDeviceBackend> zbd_be_;
+  // std::vector<Zone *> io_zones;
   std::vector<Zone *> meta_zones;
   time_t start_time_;
   std::shared_ptr<Logger> logger_;
@@ -172,13 +176,17 @@ class ZonedBlockDevice {
                       const std::vector<Zone *> zones);
 
  public:
+  std::unique_ptr<ZonedBlockDeviceBackend> zbd_be_;
   explicit ZonedBlockDevice(std::string path, ZbdBackendType backend,
                             std::shared_ptr<Logger> logger,
                             std::shared_ptr<ZenFSMetrics> metrics =
                                 std::make_shared<NoZenFSMetrics>());
   virtual ~ZonedBlockDevice();
 
-  IOStatus Open(bool readonly, bool exclusive);
+  // IOStatus Open(bool readonly, bool exclusive);
+  IOStatus Open(bool readonly, bool exclusive, 
+                int start_zone = -1, int num_zones = -1, 
+                int ao_zones = -1);
 
   Zone *GetIOZone(uint64_t offset);
 
@@ -229,6 +237,13 @@ class ZonedBlockDevice {
     return bytes_written_.load() - gc_bytes_written_.load();
   };
   uint64_t GetTotalBytesWritten() { return bytes_written_.load(); };
+
+  std::vector<Zone*> io_zones;
+  std::atomic<uint64_t> allocate_io_zones {0};
+
+
+  std::atomic<uint64_t> cur_conv_offset;
+  std::string aux_fs_path;
 
  private:
   IOStatus GetZoneDeferredStatus();

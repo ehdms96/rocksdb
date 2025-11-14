@@ -181,9 +181,10 @@ ZonedBlockDevice::ZonedBlockDevice(std::string path, ZbdBackendType backend,
     zbd_be_ = std::unique_ptr<ZoneFsBackend>(new ZoneFsBackend(path));
     Info(logger_, "New zonefs backing: %s", zbd_be_->GetFilename().c_str());
   }
+  cur_conv_offset = 0; // wal conventional ssd write
 }
 
-IOStatus ZonedBlockDevice::Open(bool readonly, bool exclusive) {
+IOStatus ZonedBlockDevice::Open(bool readonly, bool exclusive, int start_zone, int num_zones, int ao_zones) {
   std::unique_ptr<ZoneList> zone_rep;
   unsigned int max_nr_active_zones;
   unsigned int max_nr_open_zones;
@@ -192,9 +193,10 @@ IOStatus ZonedBlockDevice::Open(bool readonly, bool exclusive) {
   uint64_t m = 0;
   // Reserve one zone for metadata and another one for extent migration
   int reserved_zones = 2;
+  int io_zone_start_offset = 0;
 
-  if (!readonly && !exclusive)
-    return IOStatus::InvalidArgument("Write opens must be exclusive");
+  // if (!readonly && !exclusive)
+  //   return IOStatus::InvalidArgument("Write opens must be exclusive");
 
   IOStatus ios = zbd_be_->Open(readonly, exclusive, &max_nr_active_zones,
                                &max_nr_open_zones);
@@ -206,6 +208,10 @@ IOStatus ZonedBlockDevice::Open(bool readonly, bool exclusive) {
                                   " required)");
   }
 
+  fprintf(stdout, "[ZoneBlockDevice] start_zone: %d num_zones: %d ao_zones: %d\n",
+      start_zone, num_zones, ao_zones);
+
+  if (ao_zones == -1) {
   if (max_nr_active_zones == 0)
     max_nr_active_io_zones_ = zbd_be_->GetNrZones();
   else
@@ -215,21 +221,36 @@ IOStatus ZonedBlockDevice::Open(bool readonly, bool exclusive) {
     max_nr_open_io_zones_ = zbd_be_->GetNrZones();
   else
     max_nr_open_io_zones_ = max_nr_open_zones - reserved_zones;
+  } else {
+      max_nr_active_io_zones_ = ao_zones - reserved_zones;
+      max_nr_open_io_zones_ = ao_zones - reserved_zones;
+      io_zone_start_offset = start_zone;
+      fprintf(stdout, "[ZonedBlockDevice Static Zone Setting]\n nr zones: %u max active: %u max open: %u \n",
+      num_zones, max_nr_active_io_zones_, max_nr_open_io_zones_);
+  }
 
   Info(logger_, "Zone block device nr zones: %u max active: %u max open: %u \n",
        zbd_be_->GetNrZones(), max_nr_active_zones, max_nr_open_zones);
 
   zone_rep = zbd_be_->ListZones();
-  if (zone_rep == nullptr || zone_rep->ZoneCount() != zbd_be_->GetNrZones()) {
+
+  if (ao_zones != -1 ) {
+    zone_rep->zone_count_ = num_zones;
+  }
+
+  fprintf(stdout, "ZoneCount : %u\n",zone_rep->ZoneCount());
+
+  // if (zone_rep == nullptr || zone_rep->ZoneCount() != zbd_be_->GetNrZones()) {
+  if (zone_rep == nullptr) {
     Error(logger_, "Failed to list zones");
     return IOStatus::IOError("Failed to list zones");
   }
 
   while (m < ZENFS_META_ZONES && i < zone_rep->ZoneCount()) {
     /* Only use sequential write required zones */
-    if (zbd_be_->ZoneIsSwr(zone_rep, i)) {
-      if (!zbd_be_->ZoneIsOffline(zone_rep, i)) {
-        meta_zones.push_back(new Zone(this, zbd_be_.get(), zone_rep, i));
+    if (zbd_be_->ZoneIsSwr(zone_rep, i + io_zone_start_offset)) {
+      if (!zbd_be_->ZoneIsOffline(zone_rep, i + io_zone_start_offset)) {
+        meta_zones.push_back(new Zone(this, zbd_be_.get(), zone_rep, i + io_zone_start_offset));
       }
       m++;
     }
@@ -241,18 +262,18 @@ IOStatus ZonedBlockDevice::Open(bool readonly, bool exclusive) {
 
   for (; i < zone_rep->ZoneCount(); i++) {
     /* Only use sequential write required zones */
-    if (zbd_be_->ZoneIsSwr(zone_rep, i)) {
-      if (!zbd_be_->ZoneIsOffline(zone_rep, i)) {
-        Zone *newZone = new Zone(this, zbd_be_.get(), zone_rep, i);
+    if (zbd_be_->ZoneIsSwr(zone_rep, i + io_zone_start_offset)) {
+      if (!zbd_be_->ZoneIsOffline(zone_rep, i + io_zone_start_offset)) {
+        Zone *newZone = new Zone(this, zbd_be_.get(), zone_rep, i + io_zone_start_offset);
         if (!newZone->Acquire()) {
           assert(false);
           return IOStatus::Corruption("Failed to set busy flag of zone " +
                                       std::to_string(newZone->GetZoneNr()));
         }
         io_zones.push_back(newZone);
-        if (zbd_be_->ZoneIsActive(zone_rep, i)) {
+        if (zbd_be_->ZoneIsActive(zone_rep, i + io_zone_start_offset)) {
           active_io_zones_++;
-          if (zbd_be_->ZoneIsOpen(zone_rep, i)) {
+          if (zbd_be_->ZoneIsOpen(zone_rep, i + io_zone_start_offset)) {
             if (!readonly) {
               newZone->Close();
             }
@@ -265,6 +286,11 @@ IOStatus ZonedBlockDevice::Open(bool readonly, bool exclusive) {
       }
     }
   }
+
+  fprintf(stdout, "[meta zones] %ld-%ld\n", 
+      meta_zones[0]->GetZoneNr(), meta_zones[meta_zones.size() - 1]->GetZoneNr());
+  fprintf(stdout, "[io zones] %ld-%ld\n", io_zones[0]->GetZoneNr(), 
+            io_zones[io_zones.size() - 1]->GetZoneNr());
 
   start_time_ = time(NULL);
 

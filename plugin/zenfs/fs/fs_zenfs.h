@@ -70,6 +70,7 @@ class Superblock {
     magic_ = MAGIC;
     superblock_version_ = CURRENT_SUPERBLOCK_VERSION;
     flags_ = DEFAULT_FLAGS;
+    wal_flags_ = DEFAULT_FLAGS;
     if (enable_gc) flags_ |= FLAGS_ENABLE_GC;
 
     finish_treshold_ = finish_threshold;
@@ -95,6 +96,7 @@ class Superblock {
   uint32_t GetFinishTreshold() { return finish_treshold_; }
   std::string GetUUID() { return std::string(uuid_); }
   bool IsGCEnabled() { return flags_ & FLAGS_ENABLE_GC; };
+  bool IsWALEnabled() { return wal_flags_ & FLAGS_WAL_ON_AUX; };
 };
 
 class ZenMetaLog {
@@ -148,6 +150,7 @@ class ZenFS : public FileSystemWrapper {
 
   std::unique_ptr<std::thread> gc_worker_ = nullptr;
   bool run_gc_worker_ = false;
+  bool wal_on_aux_ = false;
 
   struct ZenFSMetadataWriter : public MetadataWriter {
     ZenFS* zenFS;

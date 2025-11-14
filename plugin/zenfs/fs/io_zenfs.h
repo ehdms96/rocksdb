@@ -20,12 +20,21 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <future>
 
 #include "rocksdb/file_system.h"
 #include "rocksdb/io_status.h"
 #include "zbd_zenfs.h"
 
 namespace ROCKSDB_NAMESPACE {
+class ZoneFile;
+
+struct WriteArg {
+  ZonedBlockDevice *zbd;
+  char *data;
+  uint64_t offset;
+  uint32_t size;
+};
 
 class ZoneExtent {
  public:
@@ -79,6 +88,9 @@ class ZoneFile {
   std::mutex writer_mtx_;
   std::atomic<int> readers_{0};
 
+  int level_ {-1};
+  int type_ {-1};
+
  public:
   static const int SPARSE_HEADER_SIZE = 8;
 
@@ -95,6 +107,8 @@ class ZoneFile {
   bool IsOpenForWR();
 
   IOStatus PersistMetadata();
+
+  void GetWalFutures();
 
   IOStatus Append(void* buffer, int data_size);
   IOStatus BufferedAppend(char* data, uint32_t size);
@@ -149,6 +163,13 @@ class ZoneFile {
   IOStatus RenameLink(const std::string& src, const std::string& dest);
   uint32_t GetNrLinks() { return linkfiles_.size(); }
   const std::vector<std::string>& GetLinkFiles() const { return linkfiles_; }
+  
+  // Conventional WAL Writes
+  std::vector<std::future<void>> futures;
+  int fd {0}; // file descriptor for WAL files
+  int wal_type {0}; // 0 : ZNS, 1 : CNS, 2 : Posix
+  std::string filename;
+  std::mutex pool_lock;
 
   IOStatus InvalidateCache(uint64_t pos, uint64_t size);
 

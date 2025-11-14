@@ -48,6 +48,9 @@ DEFINE_string(backup_path, "", "Path to backup files");
 DEFINE_string(src_file, "", "Source file path");
 DEFINE_string(dest_file, "", "Destination file path");
 DEFINE_bool(enable_gc, false, "Enable garbage collection");
+DEFINE_int32(start_zone, -1, "start zone number");
+DEFINE_int32(num_zones, -1, "start zone number");
+DEFINE_int32(ao_zones, -1, "number of active/open zones");
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -55,13 +58,16 @@ void AddDirSeparatorAtEnd(std::string &path) {
   if (path.empty() || path.back() != '/') path = path + "/";
 }
 
-std::unique_ptr<ZonedBlockDevice> zbd_open(bool readonly, bool exclusive) {
+std::unique_ptr<ZonedBlockDevice> zbd_open(bool readonly, bool exclusive,
+                    int start_zone = FLAGS_start_zone, int num_zones = FLAGS_num_zones, 
+                    int ao_zones = FLAGS_ao_zones) {
   std::unique_ptr<ZonedBlockDevice> zbd{new ZonedBlockDevice(
       FLAGS_zbd.empty() ? FLAGS_zonefs : FLAGS_zbd,
       FLAGS_zbd.empty() ? ZbdBackendType::kZoneFS : ZbdBackendType::kBlockDev,
       nullptr)};
 
-  IOStatus open_status = zbd->Open(readonly, exclusive);
+  // IOStatus open_status = zbd->Open(readonly, exclusive);
+  IOStatus open_status = zbd->Open(readonly, exclusive, start_zone, num_zones, ao_zones);
 
   if (!open_status.ok()) {
     fprintf(stderr, "Failed to open zoned block device: %s, error: %s\n",
@@ -162,7 +168,9 @@ int zenfs_tool_mkfs() {
 
   if (create_aux_dir(FLAGS_aux_path.c_str())) return 1;
 
-  std::unique_ptr<ZonedBlockDevice> zbd = zbd_open(false, true);
+  // std::unique_ptr<ZonedBlockDevice> zbd = zbd_open(false, true);
+  std::unique_ptr<ZonedBlockDevice> zbd = zbd_open(false, false, 
+          FLAGS_start_zone, FLAGS_num_zones, FLAGS_ao_zones);
   if (!zbd) return 1;
 
   std::unique_ptr<ZenFS> zenFS;
@@ -176,7 +184,8 @@ int zenfs_tool_mkfs() {
 
   zenFS.reset();
 
-  zbd = zbd_open(false, true);
+  // zbd = zbd_open(false, true);
+  zbd = zbd_open(false, false, FLAGS_start_zone, FLAGS_num_zones, FLAGS_ao_zones);
   ZonedBlockDevice *zbdRaw = zbd.get();
   zenFS.reset(new ZenFS(zbd.release(), FileSystem::Default(), nullptr));
 

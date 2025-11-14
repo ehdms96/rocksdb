@@ -63,24 +63,50 @@ IOStatus ZbdlibBackend::Open(bool readonly, bool exclusive,
                              unsigned int *max_active_zones,
                              unsigned int *max_open_zones) {
   zbd_info info;
+  open_conv_ = 1;
 
   /* The non-direct file descriptor acts as an exclusive-use semaphore */
   if (exclusive) {
     read_f_ = zbd_open(filename_.c_str(), O_RDONLY | O_EXCL, &info);
+    if (open_conv_) {
+      read_f_conv_ = open("/dev/nvme0n1", O_RDONLY | O_EXCL);
+    }
   } else {
     read_f_ = zbd_open(filename_.c_str(), O_RDONLY, &info);
+    if (open_conv_) {
+      read_f_conv_ = open("/dev/nvme0n1", O_RDONLY);
+    }
   }
 
   if (read_f_ < 0) {
+    fprintf(stdout, "Failed to open zoned block device for read\n");
     return IOStatus::InvalidArgument(
         "Failed to open zoned block device for read: " + ErrorToString(errno));
+  }
+  if (open_conv_) {
+    if (read_f_conv_ < 0) {
+      fprintf(stdout, "Failed to open conv block device for read\n");
+      return IOStatus::InvalidArgument(
+          "Failed to open conv block device for read: " + ErrorToString(errno));
+    }
   }
 
   read_direct_f_ = zbd_open(filename_.c_str(), O_RDONLY | O_DIRECT, &info);
   if (read_direct_f_ < 0) {
+    fprintf(stdout, "Failed to open zoned block device for direct read\n");
     return IOStatus::InvalidArgument(
         "Failed to open zoned block device for direct read: " +
         ErrorToString(errno));
+  }
+
+  if (open_conv_) {
+    read_direct_f_conv_ = open("/dev/nvme0n1", O_RDONLY | O_DIRECT);
+    if (read_direct_f_conv_ < 0) {
+      fprintf(stdout, "Failed to open conv block device for direct read\n");
+      return IOStatus::InvalidArgument(
+          "Failed to open conv block device for direct read: " +
+          ErrorToString(errno));
+    }
   }
 
   if (readonly) {
@@ -88,9 +114,19 @@ IOStatus ZbdlibBackend::Open(bool readonly, bool exclusive,
   } else {
     write_f_ = zbd_open(filename_.c_str(), O_WRONLY | O_DIRECT, &info);
     if (write_f_ < 0) {
+      fprintf(stdout, "Failed to open zoned block device for write\n");
       return IOStatus::InvalidArgument(
           "Failed to open zoned block device for write: " +
           ErrorToString(errno));
+    }
+    if (open_conv_) {
+      write_f_conv_ = open("/dev/nvme0n1", O_WRONLY | O_DIRECT);
+      if (write_f_conv_ < 0) {
+      fprintf(stdout, "Failed to open conv block device for write\n");
+        return IOStatus::InvalidArgument(
+            "Failed to open conv block device for write: " +
+            ErrorToString(errno));
+      }
     }
   }
 
@@ -177,6 +213,14 @@ int ZbdlibBackend::Read(char *buf, int size, uint64_t pos, bool direct) {
 
 int ZbdlibBackend::Write(char *data, uint32_t size, uint64_t pos) {
   return pwrite(write_f_, data, size, pos);
+}
+
+int ZbdlibBackend::ConvRead(char *buf, int size, uint64_t pos, bool direct) {
+  return pread(direct ? read_direct_f_conv_ : read_f_conv_, buf, size, pos);
+}
+
+int ZbdlibBackend::ConvWrite(char *data, uint32_t size, uint64_t pos) {
+  return pwrite(write_f_conv_, data, size, pos);
 }
 
 }  // namespace ROCKSDB_NAMESPACE
