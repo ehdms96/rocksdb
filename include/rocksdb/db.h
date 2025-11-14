@@ -476,6 +476,10 @@ class DB {
 
   virtual ~DB();
 
+  virtual void RestartWorkload() {
+    fprintf(stdout, "DB::RestartWorkload\n");
+  }
+
   // Create a column_family and return the handle of column family
   // through the argument handle.
   // NOTE: creating many column families one-by-one is not recommended because

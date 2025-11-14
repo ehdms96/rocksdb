@@ -704,6 +704,10 @@ class FileSystem : public Customizable {
     return IOStatus::OK();
   }
 
+  virtual void RestartWorkload() {
+    fprintf(stdout, "RestartWorkload\n");
+  }
+  
   // EXPERIMENTAL
   // Discard any directory metadata cached in memory for the specified
   // directory and its descendants. Useful for distributed file systems

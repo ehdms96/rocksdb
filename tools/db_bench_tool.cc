@@ -4084,6 +4084,8 @@ class Benchmark {
           multi_dbs_.clear();
         }
         Open(&open_options_, hooks);  // use open_options for the last accessed
+      } else {
+        db_.db->RestartWorkload();
       }
 
       if (method != nullptr) {

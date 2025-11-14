@@ -203,6 +203,10 @@ class DBImpl : public DB {
 
   virtual ~DBImpl();
 
+  void RestartWorkload() override {
+    fs_->RestartWorkload();
+  }
+
   // ---- Implementations of the DB interface ----
 
   using DB::Resume;

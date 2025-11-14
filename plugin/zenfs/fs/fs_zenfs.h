@@ -214,6 +214,13 @@ class ZenFS : public FileSystemWrapper {
     return path;
   }
 
+  void RestartWorkload() {
+    fprintf(stdout, "ZenFS::RestartWorkload\n");
+    ZenFSStats();
+    zbd_->do_workload = true;
+  }
+
+
   /* Must hold files_mtx_ */
   std::shared_ptr<ZoneFile> GetFileNoLock(std::string fname);
   /* Must hold files_mtx_ */
