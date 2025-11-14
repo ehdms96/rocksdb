@@ -84,6 +84,7 @@ class SystemClock : public Customizable {
 
   // Converts seconds-since-Jan-01-1970 to a printable string
   virtual std::string TimeToString(uint64_t time) = 0;
+  virtual std::string TimeToStringMicros(uint64_t time) = 0;
 };
 
 // Wrapper class for a SystemClock.  Redirects all methods (except Name)
@@ -115,6 +116,10 @@ class SystemClockWrapper : public SystemClock {
 
   std::string TimeToString(uint64_t time) override {
     return target_->TimeToString(time);
+  }
+
+  std::string TimeToStringMicros(uint64_t time) override {
+    return target_->TimeToStringMicros(time);
   }
 
   Status PrepareOptions(const ConfigOptions& options) override;

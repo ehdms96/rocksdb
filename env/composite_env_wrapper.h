@@ -255,6 +255,9 @@ class CompositeEnv : public Env {
   std::string TimeToString(uint64_t time) override {
     return system_clock_->TimeToString(time);
   }
+  std::string TimeToStringMicros(uint64_t time) override {
+    return system_clock_->TimeToStringMicros(time);
+  }
 };
 
 // A `CompositeEnvWrapper` is constructed with a target `Env` object, an

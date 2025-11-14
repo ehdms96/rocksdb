@@ -93,6 +93,10 @@ class LegacySystemClock : public SystemClock {
     return env_->TimeToString(time);
   }
 
+  std::string TimeToStringMicros(uint64_t time) override {
+    return env_->TimeToStringMicros(time);
+  }
+
   std::string SerializeOptions(const ConfigOptions& /*config_options*/,
                                const std::string& /*prefix*/) const override {
     // We do not want the LegacySystemClock to appear in the serialized output.

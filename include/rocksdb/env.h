@@ -594,6 +594,7 @@ class Env : public Customizable {
 
   // Converts seconds-since-Jan-01-1970 to a printable string
   virtual std::string TimeToString(uint64_t time) = 0;
+  virtual std::string TimeToStringMicros(uint64_t time) = 0;
 
   // Generates a human-readable unique ID that can be used to identify a DB.
   // In built-in implementations, this is an RFC-4122 UUID string, but might
@@ -1639,6 +1640,10 @@ class EnvWrapper : public Env {
 
   std::string TimeToString(uint64_t time) override {
     return target_.env->TimeToString(time);
+  }
+
+  std::string TimeToStringMicros(uint64_t time) override {
+    return target_.env->TimeToStringMicros(time);
   }
 
   Status GetThreadList(std::vector<ThreadStatus>* thread_list) override {

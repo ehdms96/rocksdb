@@ -101,6 +101,26 @@ class MockSystemClock : public SystemClockWrapper {
   // details: PR #7101.
   void InstallTimedWaitFixCallback();
 
+  std::string TimeToStringMicros(uint64_t micros_since_epoch) override {
+    time_t seconds = micros_since_epoch / kMicrosInSecond;
+    uint64_t micros = micros_since_epoch % kMicrosInSecond;
+
+    struct tm t;
+    port::LocalTimeR(&seconds, &t);
+
+    char buf[64];
+    snprintf(buf, sizeof(buf),
+             "%04d/%02d/%02d-%02d:%02d:%02d.%06lu",
+             t.tm_year + 1900,
+             t.tm_mon + 1,
+             t.tm_mday,
+             t.tm_hour,
+             t.tm_min,
+             t.tm_sec,
+             micros);
+    return std::string(buf);
+  }
+
  private:
   std::atomic<uint64_t> current_time_us_{0};
   static constexpr uint64_t kMicrosInSecond = 1000U * 1000U;

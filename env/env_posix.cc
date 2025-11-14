@@ -207,6 +207,25 @@ class PosixClock : public SystemClock {
              t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec);
     return dummy;
   }
+
+  std::string TimeToStringMicros(uint64_t microsSince1970) {
+    time_t seconds = microsSince1970 / 1000000;
+    uint64_t micros = microsSince1970 % 1000000;
+
+    struct tm t;
+    port::LocalTimeR(&seconds, &t);
+
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%04d/%02d/%02d-%02d:%02d:%02d.%06lu",
+             t.tm_year + 1900,
+             t.tm_mon + 1,
+             t.tm_mday,
+             t.tm_hour,
+             t.tm_min,
+             t.tm_sec,
+             micros);
+    return std::string(buf);
+  }
 };
 
 class PosixEnv : public CompositeEnv {
