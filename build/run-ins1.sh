@@ -17,9 +17,13 @@ then
  rm -r /mnt/tmpfs/zenfs_aux01
 fi
 
+start_zone=0
+num_zones=512
+ao_zones=7
+
 blkzone reset /dev/nvme1n1
 ../plugin/zenfs/util/zenfs mkfs --zbd=nvme1n1 --aux_path=/mnt/tmpfs/zenfs_aux01 \
-	--enable_gc=true --start_zone=0 --num_zones=256 --ao_zones=7 --force
+	--enable_gc=true --start_zone=$start_zone --num_zones=$num_zones --ao_zones=$ao_zones --force
 
 echo "Complete!"
 
@@ -30,7 +34,7 @@ output_file="/mnt/tmpfs/Z_64G_T8_WAL_CNS_$(date +%Y%m%d_%H%M%S)_I1.log"
 
 if [ $1 -eq 1 ]; then
   echo "YCSBLOAD,YCSBA starts"
-  ./cns_db_bench1 --fs_uri=zenfs://dev:nvme1n1 \
+  ./db_bench --fs_uri=zenfs://dev:nvme1n1/$start_zone\/$num_zones\/$ao_zones \
            --benchmarks=YCSBLOAD,YCSBA,stats \
            --use_direct_io_for_flush_and_compaction \
 	   --compression_type=none \

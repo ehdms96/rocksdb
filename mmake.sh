@@ -1,3 +1,3 @@
-make clean
+#make clean
 DEBUG_LEVEL=0 ROCKSDB_PLUGINS=zenfs make -j32 db_bench install
-cp db_bench build/db_bench
+cp db_bench ./build

@@ -1694,6 +1694,23 @@ Status NewZenFS(FileSystem** fs, const ZbdBackendType backend_type,
                 std::shared_ptr<ZenFSMetrics> metrics) {
   std::shared_ptr<Logger> logger;
   Status s;
+  
+  // backend_name : nvme3n2/start_zone/num_zones/ao_zones
+  std::istringstream ss(backend_name);
+  std::vector<std::string> flags;
+  std::string sbuffer;
+
+  while (getline(ss, sbuffer, '/')) { // "/" 기준으로 문자열 쪼갬
+    flags.push_back(sbuffer);
+    std::cout << sbuffer << "\n";
+  }
+
+  // flags[0] : b_name
+  // flags[1] : start_zone
+  // flags[2] : num_zones
+  // flags[3] : ao_zones
+
+  std::string b_name = flags[0];
 
   // TerarkDB needs to log important information in production while ZenFS
   // doesn't (currently).
@@ -1701,7 +1718,7 @@ Status NewZenFS(FileSystem** fs, const ZbdBackendType backend_type,
   // TODO(guokuankuan@bytedance.com) We need to figure out how to reuse
   // RocksDB's logger in the future.
 #if !defined(NDEBUG) || defined(WITH_TERARKDB)
-  s = Env::Default()->NewLogger(GetLogFilename(backend_name), &logger);
+  s = Env::Default()->NewLogger(GetLogFilename(b_name), &logger);
   if (!s.ok()) {
     fprintf(stderr, "ZenFS: Could not create logger");
   } else {
@@ -1712,21 +1729,14 @@ Status NewZenFS(FileSystem** fs, const ZbdBackendType backend_type,
   }
 #endif
 
-  // 사용할 Zone 범위와 Open/Active zone 개수를 static 하게 세팅
-  // INS1
-  int start_zone = 0;
-  int num_zones = 256;
-
-  // INS2
-  // int start_zone = 256;
-  // int num_zones = 256;
-
-  int aor_zones = 7;
+  int start_zone = std::stoi(flags[1]);
+  int num_zones = std::stoi(flags[2]);
+  int ao_zones = std::stoi(flags[3]);
 
   ZonedBlockDevice* zbd =
-      new ZonedBlockDevice(backend_name, backend_type, logger, metrics);
+      new ZonedBlockDevice(b_name, backend_type, logger, metrics);
   // IOStatus zbd_status = zbd->Open(false, true);
-  IOStatus zbd_status = zbd->Open(false, false, start_zone, num_zones, aor_zones);
+  IOStatus zbd_status = zbd->Open(false, false, start_zone, num_zones, ao_zones);
   if (!zbd_status.ok()) {
     Error(logger, "mkfs: Failed to open zoned block device: %s",
           zbd_status.ToString().c_str());
