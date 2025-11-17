@@ -20,6 +20,8 @@ fi
 start_zone=512
 num_zones=512
 ao_zones=7
+cns_start=$((1*1024*1024*1024))
+cns_len=$((1*1024*1024*1024))
 
 #blkzone reset /dev/nvme1n1
 ../plugin/zenfs/util/zenfs mkfs --zbd=nvme1n1 --aux_path=/mnt/tmpfs/zenfs_aux02 \
@@ -34,7 +36,7 @@ output_file="/mnt/tmpfs/Z_64G_T8_WAL_CNS_$(date +%Y%m%d_%H%M%S)_I2.log"
 
 if [ $1 -eq 1 ]; then
   echo "YCSBLOAD,YCSBA starts"
-  ./db_bench --fs_uri=zenfs://dev:nvme1n1/$start_zone\/$num_zones\/$ao_zones \
+  ./db_bench --fs_uri=zenfs://dev:nvme1n1/$start_zone\/$num_zones\/$ao_zones\/$cns_start\/$cns_len \
            --benchmarks=YCSBLOAD,YCSBA,stats \
            --use_direct_io_for_flush_and_compaction \
 	   --compression_type=none \

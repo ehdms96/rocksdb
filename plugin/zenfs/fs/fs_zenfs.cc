@@ -1733,10 +1733,14 @@ Status NewZenFS(FileSystem** fs, const ZbdBackendType backend_type,
   int num_zones = std::stoi(flags[2]);
   int ao_zones = std::stoi(flags[3]);
 
+  uint64_t cns_start = std::stoul(flags[4]);
+  uint64_t cns_len = std::stoul(flags[5]);
+
   ZonedBlockDevice* zbd =
       new ZonedBlockDevice(b_name, backend_type, logger, metrics);
   // IOStatus zbd_status = zbd->Open(false, true);
-  IOStatus zbd_status = zbd->Open(false, false, start_zone, num_zones, ao_zones);
+  IOStatus zbd_status = zbd->Open(false, false, start_zone, num_zones, 
+                                  ao_zones, cns_start, cns_len);
   if (!zbd_status.ok()) {
     Error(logger, "mkfs: Failed to open zoned block device: %s",
           zbd_status.ToString().c_str());

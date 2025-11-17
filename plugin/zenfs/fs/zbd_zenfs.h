@@ -191,7 +191,7 @@ class ZonedBlockDevice {
   // IOStatus Open(bool readonly, bool exclusive);
   IOStatus Open(bool readonly, bool exclusive, 
                 int start_zone = -1, int num_zones = -1, 
-                int ao_zones = -1);
+                int ao_zones = -1, uint64_t cns_start = -1, uint64_t cns_len = -1);
 
   Zone *GetIOZone(uint64_t offset);
 
@@ -262,7 +262,12 @@ class ZonedBlockDevice {
   std::atomic<uint64_t> reset_util_sum_{0};
   std::atomic<uint64_t> reset_util_max_{0};
 
-  std::atomic<uint64_t> cur_conv_offset;
+  // conventional area for WAL
+  uint64_t cns_start_;
+  uint64_t cns_len_;
+  uint64_t cns_offset_;
+  // std::atomic<uint64_t> cns_offset_;
+
   std::string aux_fs_path;
 
  private:

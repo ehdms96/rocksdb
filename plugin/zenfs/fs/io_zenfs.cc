@@ -280,7 +280,8 @@ ZoneFile::~ZoneFile() { ClearExtents(); }
 void ZoneFile::ClearExtents() {
   for (auto e = std::begin(extents_); e != std::end(extents_); ++e) {
     Zone* zone = (*e)->zone_;
-
+    if (zone == nullptr)
+      break;
     assert(zone && zone->used_capacity_ >= (*e)->length_);
     zone->used_capacity_ -= (*e)->length_;
     delete *e;
@@ -578,44 +579,56 @@ IOStatus ZoneFile::SparseAppend(char* sparse_buffer, uint32_t data_size) {
   IOStatus s;
 
   if (wal_type == 1 || wal_type == 2) {
-    if (zbd_->cur_conv_offset + data_size >= CONV_SPACE_BYTES) {
-      zbd_->cur_conv_offset = 0;
+    while (left) {
+      wr_size = left + ZoneFile::SPARSE_HEADER_SIZE;
+      
+      if (zbd_->cns_offset_ + wr_size >= zbd_->cns_start_ + zbd_->cns_len_) {
+        zbd_->cns_offset_ = zbd_->cns_start_;
+      }
+
+      uint32_t align = wr_size % block_sz;
+      uint32_t pad_sz = 0;
+
+      if (align) pad_sz = block_sz - align;
+
+      if (pad_sz) memset(sparse_buffer + wr_size, 0x0, pad_sz);
+
+      uint64_t extent_length = wr_size - ZoneFile::SPARSE_HEADER_SIZE;
+      EncodeFixed64(sparse_buffer, extent_length);
+
+      if (wal_type == 1) {
+        // fprintf(stdout, "WAL Writes offset : %lu len : %u\n", 
+        //           zbd_->cns_offset_, wr_size + pad_sz);
+        int ret = zbd_->zbd_be_->ConvWrite(sparse_buffer, wr_size + pad_sz,
+                                           zbd_->cns_offset_);
+        if (ret < 0) {
+          fprintf(stderr, "ConvWrite failed ret : %d errno : %d\n", ret, errno);
+          return IOStatus::IOError();
+        }
+      } else if (wal_type == 2) {
+        int ret = write(fd, sparse_buffer, wr_size + pad_sz);
+
+        if (ret < 0) {
+          fprintf(stdout, "ZoneFile::SparseAppend::write failed\n");
+          return IOStatus::IOError();
+        }
+
+        if (fsync(fd) < 0) {
+          fprintf(stdout, "ZoneFile::SparseAppend::fsync failed\n");
+          return IOStatus::IOError();
+        }
+      }
+
+      extents_.push_back(
+          new ZoneExtent(zbd_->cns_offset_ + ZoneFile::SPARSE_HEADER_SIZE,
+                         extent_length, nullptr));
+
+      zbd_->cns_offset_ += (wr_size + pad_sz);
+      file_size_ += extent_length;
+      left -= extent_length;
     }
 
-    data_size += ZoneFile::SPARSE_HEADER_SIZE;
-    uint32_t align = data_size % block_sz;
-    uint32_t pad_sz = 0;
-
-    if (align) pad_sz = block_sz - align;
-
-    if (pad_sz) memset(sparse_buffer + data_size, 0x0, pad_sz);
-
-    uint64_t extent_length = data_size - ZoneFile::SPARSE_HEADER_SIZE;
-    EncodeFixed64(sparse_buffer, extent_length);
-
-    if (wal_type == 1) {
-      int ret = zbd_->zbd_be_->ConvWrite(sparse_buffer, data_size + pad_sz, zbd_->cur_conv_offset);
-      if (ret < 0) {
-        fprintf(stderr, "ConvWrite failed ret : %d errno : %d\n", ret, errno);
-        return IOStatus::IOError();
-      }
-      zbd_->cur_conv_offset += (data_size + pad_sz);
-      return IOStatus::OK();
-    } else if (wal_type == 2) {
-      int ret = write(fd, sparse_buffer, data_size + pad_sz);
-
-      if (ret < 0) {
-        fprintf(stdout, "ZoneFile::SparseAppend::write failed\n");
-        return IOStatus::IOError();
-      }
-
-      if (fsync(fd) < 0) {
-        fprintf(stdout, "ZoneFile::SparseAppend::fsync failed\n");
-        return IOStatus::IOError();
-      }
-
-      return IOStatus::OK();
-    }
+    return IOStatus::OK();
   }
 
   if (active_zone_ == NULL) {

@@ -199,10 +199,10 @@ ZonedBlockDevice::ZonedBlockDevice(std::string path, ZbdBackendType backend,
   env_ = Env::Default();
   start_time_ = env_->NowMicros();
   prev_time_ = start_time_;
-  cur_conv_offset = 0; // wal conventional ssd write
 }
 
-IOStatus ZonedBlockDevice::Open(bool readonly, bool exclusive, int start_zone, int num_zones, int ao_zones) {
+IOStatus ZonedBlockDevice::Open(bool readonly, bool exclusive, int start_zone, int num_zones, 
+                                int ao_zones, uint64_t cns_start, uint64_t cns_len) {
   std::unique_ptr<ZoneList> zone_rep;
   unsigned int max_nr_active_zones;
   unsigned int max_nr_open_zones;
@@ -225,6 +225,11 @@ IOStatus ZonedBlockDevice::Open(bool readonly, bool exclusive, int start_zone, i
                                   std::to_string(ZENFS_MIN_ZONES) +
                                   " required)");
   }
+
+  // conventional area
+  cns_start_ = cns_start;
+  cns_len_ = cns_len;
+  cns_offset_ = cns_start_;
 
   fprintf(stdout, "[ZoneBlockDevice] start_zone: %d num_zones: %d ao_zones: %d\n",
       start_zone, num_zones, ao_zones);
@@ -304,6 +309,8 @@ IOStatus ZonedBlockDevice::Open(bool readonly, bool exclusive, int start_zone, i
       }
     }
   }
+
+
 
   fprintf(stdout, "[meta zones] %ld-%ld\n", 
       meta_zones[0]->GetZoneNr(), meta_zones[meta_zones.size() - 1]->GetZoneNr());
